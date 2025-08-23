@@ -17,6 +17,39 @@ company_query = st.sidebar.text_input("Şirket adı veya sembol yazın (örn: AS
 selected_symbols = []
 
 if st.sidebar.button("Ara"):
+    if st.sidebar.button("Ara"):
+    results = search_symbols(company_query)
+    if results:
+        st.subheader("Eşleşen Semboller")
+        
+        # Checkbox listesi
+        selected_symbols = []
+        for res in results:
+            symbol = res.get("symbol")
+            desc = res.get("description")
+            if st.checkbox(f"{symbol} — {desc}"):
+                selected_symbols.append(symbol)
+
+        # Eğer seçim yapıldıysa verileri getir
+        if selected_symbols:
+            st.success(f"Seçilen semboller: {', '.join(selected_symbols)}")
+            for sym in selected_symbols:
+                try:
+                    ticker = yf.Ticker(sym)
+                    info = ticker.info
+                    st.markdown(f"### {sym}")
+                    st.write(f"**Fiyat:** {info.get('currentPrice', 'N/A')}")
+                    st.write(f"**Para Birimi:** {info.get('currency', 'N/A')}")
+                    st.write(f"**Borsa:** {info.get('exchange', 'N/A')}")
+                    hist = ticker.history(period="6mo", interval="1d")
+                    st.line_chart(hist["Close"])
+                except Exception as e:
+                    st.error(f"{sym} için veri alınamadı: {e}")
+        else:
+            st.info("Sembol seçmek için kutucukları işaretleyin.")
+    else:
+        st.warning("Sonuç bulunamadı.")
+
     results = search_symbols(company_query)
     if results:
         st.subheader("Eşleşen Semboller")
