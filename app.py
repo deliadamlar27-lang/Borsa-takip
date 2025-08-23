@@ -1,4 +1,3 @@
-import os
 import time
 import requests
 import pandas as pd
@@ -127,7 +126,8 @@ with tab_results:
                             if r:
                                 results.extend(r)
                         except Exception as e:
-                            st.warning(f"{prov.__class__.__name__}: {e}")
+                            st.write(f"{prov.__class__.__name__} hata: {e}")
+                            continue
 
                 if results:
                     df = pd.DataFrame(results).drop_duplicates(subset=["symbol"])
