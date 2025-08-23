@@ -1,6 +1,6 @@
-streamlit
-yfinance
-pandas
-numpy
-plotly
-XlsxWriter
+streamlit>=1.33
+yfinance>=0.2.52
+pandas>=2.2
+numpy>=1.26
+plotly>=5.22
+XlsxWriter>=3.2
