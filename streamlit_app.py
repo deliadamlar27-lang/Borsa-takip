@@ -1,3 +1,48 @@
+import streamlit as st
+import yfinance as yf
+import requests
+
+FINNHUB_API_KEY = "d2kqkchr01qs23a3e2ug"
+
+def search_symbols(query):
+    url = f"https://finnhub.io/api/v1/search?q={query}&token={FINNHUB_API_KEY}"
+    r = requests.get(url)
+    if r.status_code == 200:
+        return r.json().get("result", [])
+    return []
+
+st.sidebar.header("Arama")
+company_query = st.sidebar.text_input("Şirket adı veya sembol yazın (örn: ASELSAN, APPLE, TESLA):")
+
+selected_symbols = []
+
+if st.sidebar.button("Ara"):
+    results = search_symbols(company_query)
+    if results:
+        st.subheader("Eşleşen Semboller")
+        for res in results:
+            symbol = res.get("symbol")
+            desc = res.get("description")
+            if st.checkbox(f"{symbol} — {desc}"):
+                selected_symbols.append(symbol)
+    else:
+        st.warning("Sonuç bulunamadı.")
+
+# Seçilen semboller için veri göster
+if selected_symbols:
+    for sym in selected_symbols:
+        try:
+            ticker = yf.Ticker(sym)
+            info = ticker.info
+            st.markdown(f"### {sym}")
+            st.write(f"**Fiyat:** {info.get('currentPrice', 'N/A')}")
+            st.write(f"**Para Birimi:** {info.get('currency', 'N/A')}")
+            st.write(f"**Borsa:** {info.get('exchange', 'N/A')}")
+            hist = ticker.history(period="1y", interval="1mo")
+            st.line_chart(hist["Close"])
+        except Exception as e:
+            st.error(f"{sym} için veri alınamadı: {e}")
+
 import time
 import requests
 import pandas as pd
