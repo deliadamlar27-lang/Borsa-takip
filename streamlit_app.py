@@ -4,29 +4,40 @@ import yfinance as yf
 import requests
 from datetime import date, timedelta
 
-def yahoo_finance_multi_symbol_search(query: str, limit=50):
+# Sembol listesini dosyadan yükle
+def load_symbols(filepath="bist_symbols.csv"):
+    try:
+        df = pd.read_csv(filepath)
+        # Kolonlar: symbol, company, exchange (örnek: ASELS.IS, Aselsan, BIST)
+        return df
+    except Exception:
+        return pd.DataFrame(columns=["symbol", "company", "exchange"])
+
+# Yahoo Finance ile yeni sembolleri çek ve listeye ekle
+def update_symbols_from_yahoo(query, filepath="bist_symbols.csv"):
     url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
     try:
         resp = requests.get(url, timeout=10)
         data = resp.json()
-        results = []
+        new_rows = []
         for item in data.get("quotes", []):
             if item.get("quoteType") in ["EQUITY", "ETF"]:
-                results.append({
+                new_rows.append({
                     "symbol": item.get("symbol"),
-                    "shortname": item.get("shortname", ""),
-                    "exchange": item.get("exchange", ""),
-                    "type": item.get("quoteType", ""),
-                    "score": item.get("score", 0)
+                    "company": item.get("shortname", ""),
+                    "exchange": item.get("exchange", "")
                 })
-            if len(results) >= limit:
-                break
-        return results
-    except Exception as e:
-        return []
-
-def parse_tickers(tickers):
-    return [t.strip().upper() for t in tickers if t.strip()]
+        # Yeni sembolleri dosyaya ekle
+        if new_rows:
+            df_old = load_symbols(filepath)
+            df_new = pd.DataFrame(new_rows)
+            df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=["symbol"]).reset_index(drop=True)
+            df_combined.to_csv(filepath, index=False)
+            return df_combined
+        else:
+            return load_symbols(filepath)
+    except Exception:
+        return load_symbols(filepath)
 
 @st.cache_data(ttl=3600)
 def fetch_monthly_data(ticker, start_dt, end_dt):
@@ -45,46 +56,38 @@ def calc_monthly_changes(df):
     df["Aylık Değişim (%)"] = df["Kapanış"].pct_change().multiply(100).round(2)
     return df[["Ay", "Kapanış", "Aylık Değişim (%)"]].dropna()
 
+# Uygulama arayüzü
 st.set_page_config(page_title="Kısaltma Listesi ve Takip", page_icon="📈", layout="wide")
-st.title("📈 Tüm Dünya Hisse/ETF Kısaltmaları Listesi ve Takip")
+st.title("📈 Kısaltma Listesiyle Hisse/ETF Takip")
 
-# Session state: seçili semboller ve arama sonuçları
 if "selected_symbols" not in st.session_state:
     st.session_state.selected_symbols = []
-if "symbol_search_results" not in st.session_state:
-    st.session_state.symbol_search_results = []
 
 with st.sidebar:
-    st.subheader("Dünya çapında sembol ara ve yönet")
-    search_query = st.text_input("Anahtar kelime ile sembol ara (örn: apple, bank, istanbul, tesla, germany, etf, vs.)", key="search_query")
-    search_limit = st.number_input("Gösterilecek maksimum sembol sayısı (örn: 50)", min_value=5, max_value=100, value=30, step=1)
-
-    # Güncelle butonu ile arama sonuçları yenilenir
-    if st.button("🔄 Güncelle / Yenile", key="update_search"):
-        if search_query:
-            st.session_state.symbol_search_results = yahoo_finance_multi_symbol_search(search_query, search_limit)
+    st.subheader("Kısaltma Ara & Ekle")
+    symbol_df = load_symbols()
+    search_query = st.text_input("Firma adı veya sembol ara (örn: aselsan, apple, akbank, aapl, msft)")
+    if search_query:
+        # Hem company hem symbol'da arama
+        results = symbol_df[symbol_df.apply(lambda row: search_query.lower() in row["company"].lower() or search_query.lower() in row["symbol"].lower(), axis=1)]
+        if not results.empty:
+            for idx, row in results.iterrows():
+                cols = st.columns([4,1])
+                with cols[0]:
+                    st.write(f"**{row['symbol']}** | {row['company']} | {row['exchange']}")
+                with cols[1]:
+                    if row['symbol'] in st.session_state.selected_symbols:
+                        if st.button(f"Çıkar ({row['symbol']})", key=f"remove_{row['symbol']}"):
+                            st.session_state.selected_symbols.remove(row['symbol'])
+                    else:
+                        if st.button(f"Ekle ({row['symbol']})", key=f"add_{row['symbol']}"):
+                            st.session_state.selected_symbols.append(row['symbol'])
         else:
-            st.session_state.symbol_search_results = []
-    
-    # Arama sonuçlarını göster ve sembol ekleme/çıkarma imkanı ver
-    if st.session_state.symbol_search_results:
-        st.write(f"**{search_query}** için bulunan semboller:")
-        for item in st.session_state.symbol_search_results:
-            symbol = item['symbol']
-            label = f"{symbol} | {item['shortname']} | {item['exchange']} | {item['type']}"
-            # Ekli ise çıkar butonu, ekli değilse ekle butonu
-            cols = st.columns([5,1])
-            with cols[0]:
-                st.write(label)
-            with cols[1]:
-                if symbol in st.session_state.selected_symbols:
-                    if st.button(f"Çıkar ({symbol})", key=f"remove_{symbol}"):
-                        st.session_state.selected_symbols.remove(symbol)
-                else:
-                    if st.button(f"Ekle ({symbol})", key=f"add_{symbol}"):
-                        st.session_state.selected_symbols.append(symbol)
-    else:
-        st.info("Yeni sembol araması için anahtar kelime girip 'Güncelle / Yenile' butonuna basın.")
+            st.warning("Hiç sembol bulunamadı. 'Güncelle' ile yeni arama ekleyebilirsiniz.")
+    # Sembol listesini güncelle
+    if st.button("🔄 Güncelle", key="update_symbols") and search_query:
+        symbol_df = update_symbols_from_yahoo(search_query)
+        st.success("Kısaltma listesi güncellendi!")
 
     st.markdown("---")
     st.subheader("Takip Listeniz")
@@ -92,12 +95,10 @@ with st.sidebar:
         st.write(", ".join(st.session_state.selected_symbols))
     else:
         st.info("Henüz bir sembol eklemediniz.")
-    st.markdown("---")
     start_dt = st.date_input("Başlangıç", value=date.today() - timedelta(days=365))
     end_dt = st.date_input("Bitiş", value=date.today())
     run = st.button("Verileri Getir", type="primary")
 
-# Seçili sembollerin verileri
 tickers = st.session_state.selected_symbols
 
 if run:
@@ -120,6 +121,5 @@ if run:
                 st.error(f"Veri çekme hatası: {e}")
 
 st.caption(
-    "Veriler Yahoo Finance'dan aylık olarak çekilir. Sadece kapanış fiyatı ve aylık değişim yüzdesi gösterilir. "
-    "Sembol arama işlemi Yahoo Finance arama API'si ile yapılır. Takip listenizdeki sembollerin verilerini topluca görebilirsiniz."
+    "Sembol arama işlemi önce yerel kısaltma listesinden yapılır, istenirse Yahoo Finance'dan yeni semboller eklenebilir."
 )
