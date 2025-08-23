@@ -4,36 +4,30 @@ import yfinance as yf
 from datetime import date, timedelta
 import requests
 
-# Manuel eşleme: BIST ve yaygın yabancı hisseler
-MANUAL_SYMBOLS = {
-    "aselsan": "ASELS.IS",
-    "türk hava yolları": "THYAO.IS",
-    "garanti": "GARAN.IS",
-    "akbank": "AKBNK.IS",
-    "koç holding": "KCHOL.IS",
-    "apple": "AAPL",
-    "microsoft": "MSFT",
-    "ford": "F",
-    "tesla": "TSLA",
-    "amazon": "AMZN",
-    # İstediğin kadar ekleyebilirsin!
-}
+def yahoo_finance_multi_symbol_search(query: str, limit=20):
+    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
+    try:
+        resp = requests.get(url, timeout=7)
+        data = resp.json()
+        results = []
+        for item in data.get("quotes", []):
+            if item.get("quoteType") in ["EQUITY", "ETF"]:
+                results.append({
+                    "symbol": item.get("symbol"),
+                    "shortname": item.get("shortname", ""),
+                    "exchange": item.get("exchange", ""),
+                    "type": item.get("quoteType", ""),
+                    "score": item.get("score", 0)
+                })
+            if len(results) >= limit:
+                break
+        return results
+    except Exception:
+        return []
 
 def parse_tickers(raw: str):
     parts = [p.strip().upper() for p in raw.replace("\n", ",").replace(";", ",").split(",")]
     return [p for p in parts if p]
-
-def yahoo_finance_symbol_search(company_name: str):
-    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={company_name}"
-    try:
-        resp = requests.get(url, timeout=7)
-        data = resp.json()
-        for item in data.get("quotes", []):
-            if item.get("quoteType") in ["EQUITY", "ETF"]:
-                return item.get("symbol")
-        return None
-    except Exception:
-        return None
 
 @st.cache_data(ttl=3600)
 def fetch_monthly_data(ticker, start_dt, end_dt):
@@ -56,36 +50,32 @@ st.set_page_config(page_title="Aylık Getiri", page_icon="📈", layout="wide")
 st.title("📈 Hisse Senedi Aylık Getiri Takibi")
 
 with st.sidebar:
-    st.subheader("Sembol ile sorgu")
+    st.subheader("İzlenecek Semboller")
     if "auto_tickers" not in st.session_state:
         st.session_state.auto_tickers = []
     auto_tickers = st.session_state.auto_tickers
 
     tickers_str = st.text_area("İzlenecek Semboller (manuel veya otomatik eklenir)", value=", ".join(auto_tickers), height=80)
     st.markdown("---")
-    st.subheader("Firma isminden sembol bul ve ekle")
-
-    company_names_raw = st.text_area(
-        "Firma adları (ör: Türk Hava Yolları, Apple)\nBirden fazla firma için: satır başı veya virgül ile ayırabilirsiniz."
-    )
-
-    names = [n.strip().lower() for n in company_names_raw.replace("\n", ",").split(",") if n.strip()]
-    for idx, name in enumerate(names):
-        if name:
-            symbol = yahoo_finance_symbol_search(name)
-            if not symbol:
-                symbol = MANUAL_SYMBOLS.get(name)
-            if symbol:
-                col1, col2 = st.columns([2, 1])
+    st.subheader("Dünya çapında sembol ara & ekle")
+    search_query = st.text_input("Anahtar kelime ile sembol ara (örn: apple, turk, bank, istanbul, tesla, germany, etf, vs.)")
+    
+    search_results = []
+    if search_query:
+        search_results = yahoo_finance_multi_symbol_search(search_query)
+        if search_results:
+            st.markdown(f"**{search_query}** için bulunan ilk {len(search_results)} sembol:")
+            for idx, item in enumerate(search_results):
+                col1, col2 = st.columns([4,1])
                 with col1:
-                    st.info(f"**{name.title()}** için sembol olarak '{symbol}' mu demek istediniz?")
+                    st.write(f"**{item['symbol']}** | {item['shortname']} | {item['exchange']} | {item['type']}")
                 with col2:
-                    if st.button(f"Ekle ({symbol})", key=f"add_{symbol}_{idx}"):
-                        if symbol not in auto_tickers:
-                            auto_tickers.append(symbol)
-                        st.success(f"'{symbol}' sembolü eklendi!")
-            else:
-                st.warning(f"{name.title()} için sembol bulunamadı.")
+                    if st.button(f"Ekle ({item['symbol']})", key=f"add_{item['symbol']}_{idx}"):
+                        if item['symbol'] not in auto_tickers:
+                            auto_tickers.append(item['symbol'])
+                        st.success(f"'{item['symbol']}' sembolü eklendi!")
+        else:
+            st.warning("Hiç sembol bulunamadı. Daha genel bir anahtar kelime deneyin.")
     st.markdown("---")
     start_dt = st.date_input("Başlangıç", value=date.today() - timedelta(days=365))
     end_dt = st.date_input("Bitiş", value=date.today())
@@ -97,7 +87,7 @@ if tickers_str:
 tickers = list(dict.fromkeys(tickers))
 
 if not tickers:
-    st.info("Lütfen en az bir sembol girin veya firma adı ile ekleyin.")
+    st.info("Lütfen en az bir sembol girin veya arama yapıp ekleyin.")
     st.stop()
 
 if run:
@@ -106,7 +96,7 @@ if run:
         st.stop()
 
     st.subheader("Sonuçlar")
-    for t in tickers[:5]:
+    for t in tickers[:10]:
         st.markdown(f"### {t}")
         try:
             df = fetch_monthly_data(t, start_dt, end_dt)
@@ -120,5 +110,5 @@ if run:
 
 st.caption(
     "Veriler Yahoo Finance'dan aylık olarak çekilir. Sadece kapanış fiyatı ve aylık değişim yüzdesi gösterilir. "
-    "Firma adına göre sembol bulmak için üstteki alanı kullanabilirsiniz. Sembol bulma işlemi Yahoo Finance arama API'si ve manuel eşleme ile yapılır."
+    "Dünyadaki tüm sembolleri bulmak için üstteki anahtar kelime arama alanını kullanabilirsiniz. Sembol bulma işlemi Yahoo Finance arama API'si ile yapılır."
 )
