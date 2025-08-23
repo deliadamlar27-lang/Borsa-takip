@@ -117,26 +117,14 @@ def add_to_watchlist(sym):
 # TAB: Sonuçlar
 # =========================
 with tab_results:
-    with tab_results:
+    # Arama butonu
     search_clicked = st.button("Ara", type="primary", use_container_width=True)
 
-    # Eğer kullanıcı sembol formatında girdiyse (örn ASELS.IS, AAPL, BMW.DE)
     if search_clicked and query.strip():
+        # Eğer sembol gibi görünüyorsa (örn. ASELS.IS, AAPL, BMW.DE)
         if "." in query.strip() or query.strip().isupper():
-            # Direkt sembol gibi kabul et
             st.session_state["current_symbol"] = query.strip()
             st.success(f"{query.strip()} sembolü seçildi. Görünüm sekmesine geçin.")
-        else:
-            # Normal isim araması
-            with st.spinner("Aranıyor..."):
-                df = run_search(query)
-            ...
-
-    search_clicked = st.button("Ara", type="primary", use_container_width=True)
-
-    if search_clicked:
-        if not query.strip():
-            st.warning("Bir arama terimi girin.")
         else:
             with st.spinner("Aranıyor..."):
                 df = run_search(query)
@@ -168,6 +156,7 @@ with tab_results:
                 st.warning("Sonuç bulunamadı. Farklı bir ifade deneyin.")
     else:
         st.info("Aramak için 'Ara' butonuna basın.")
+
 
 # =========================
 # TAB: Görünüm
