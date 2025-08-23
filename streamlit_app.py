@@ -17,7 +17,7 @@ def fetch_monthly_data(ticker, start_dt, end_dt):
     return df
 
 def calc_monthly_changes(df):
-    if df.empty:
+    if df.empty or len(df) < 2:
         return pd.DataFrame()
     df = df.copy()
     df["Ay"] = df.index.strftime("%Y-%m")
@@ -41,6 +41,10 @@ if not tickers:
     st.stop()
 
 if run:
+    if start_dt >= end_dt:
+        st.error("Başlangıç tarihi bitiş tarihinden önce olmalı!")
+        st.stop()
+
     st.subheader("Sonuçlar")
     for t in tickers[:3]:
         st.markdown(f"### {t}")
@@ -50,7 +54,7 @@ if run:
             if not changes.empty:
                 st.dataframe(changes, use_container_width=True)
             else:
-                st.info("Veri bulunamadı veya sembol geçersiz olabilir.")
+                st.info("Yeterli veri yok, lütfen tarih aralığını genişletin veya başka sembol deneyin.")
         except Exception as e:
             st.error(f"Veri çekme hatası: {e}")
 
