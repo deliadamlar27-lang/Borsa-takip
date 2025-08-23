@@ -4,8 +4,8 @@ import yfinance as yf
 import requests
 from datetime import date, timedelta
 
-# --- Ayarlar ve API Key ---
-NEWSAPI_KEY = st.secrets.get("newsapi_key", "aa6e3b9181e8404bbad288b01e73e19f")
+# --- NewsAPI Anahtarı (DİKKAT: Güvenlik için genelde tavsiye edilmez) ---
+NEWSAPI_KEY = "aa6e3b9181e8404bbad288b01e73e19f"  # Anahtarını buraya yazdım
 
 # --- Yardımcı Fonksiyonlar ---
 def parse_tickers(raw: str):
