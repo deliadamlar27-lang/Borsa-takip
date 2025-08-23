@@ -1,4 +1,12 @@
-ASELS,Aselsan,BIST
-THYAO,Turkish Airlines,BIST
+symbol,company,exchange
+ASELS.IS,Aselsan,BIST
+THYAO.IS,Türk Hava Yolları,BIST
+GARAN.IS,Garanti Bankası,BIST
 AAPL,Apple Inc.,NASDAQ
-
+MSFT,Microsoft Corporation,NASDAQ
+TSLA,Tesla Inc.,NASDAQ
+GOOGL,Alphabet Inc.,NASDAQ
+AMZN,Amazon.com Inc.,NASDAQ
+IBM,International Business Machines,NYSE
+NFLX,Netflix Inc.,NASDAQ
+...
