@@ -2,25 +2,25 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 from datetime import date, timedelta
-
-# Sembol eşleme sözlüğü (isteğe göre genişlet)
-COMPANY_TO_SYMBOL = {
-    "türk hava yolları": ["THYAO.IS"],
-    "aselsan": ["ASELS.IS"],
-    "apple": ["AAPL"],
-    "microsoft": ["MSFT"],
-    "ford": ["F"],
-    "tesla": ["TSLA"],
-    "garanti": ["GARAN.IS"],
-    "akbank": ["AKBNK.IS"],
-    "koç holding": ["KCHOL.IS"],
-    "amazon": ["AMZN"],
-    # İstediğin kadar ekleyebilirsin!
-}
+import requests
 
 def parse_tickers(raw: str):
     parts = [p.strip().upper() for p in raw.replace("\n", ",").replace(";", ",").split(",")]
     return [p for p in parts if p]
+
+def yahoo_finance_symbol_search(company_name: str):
+    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={company_name}"
+    try:
+        resp = requests.get(url, timeout=7)
+        data = resp.json()
+        # Sonuçlardan uygun olan ilk sembolü bul
+        for item in data.get("quotes", []):
+            # Eğer hisse ise (ör: equity), sembolü döndür
+            if item.get("quoteType") in ["EQUITY", "ETF"]:
+                return item.get("symbol")
+        return None
+    except Exception as e:
+        return None
 
 @st.cache_data(ttl=3600)
 def fetch_monthly_data(ticker, start_dt, end_dt):
@@ -44,24 +44,49 @@ st.title("📈 Hisse Senedi Aylık Getiri Takibi")
 
 with st.sidebar:
     st.subheader("Sembol ile sorgu")
-    tickers_str = st.text_area("İzlenecek Semboller", value="THYAO.IS, ASELS.IS\nAAPL, MSFT", height=80)
+    # Otomatik eklenen semboller burada tutulur
+    if "auto_tickers" not in st.session_state:
+        st.session_state.auto_tickers = []
+    auto_tickers = st.session_state.auto_tickers
+
+    tickers_str = st.text_area("İzlenecek Semboller (manuel veya otomatik eklenir)", value=", ".join(auto_tickers), height=80)
     st.markdown("---")
-    st.subheader("Firma isminden sembol bul")
-    company_name = st.text_input("Firma adı (ör: Türk Hava Yolları, Apple)")
-    if company_name:
-        found = COMPANY_TO_SYMBOL.get(company_name.strip().lower())
-        if found:
-            st.success(f"**{company_name}** için semboller: `{', '.join(found)}`")
-        else:
-            st.warning("Bu firma için bir sembol bulunamadı. Sözlüğe ekleyebilirsiniz.")
+    st.subheader("Firma isminden sembol bul ve ekle")
+    company_names_raw = st.text_area("Firma adları (ör: Türk Hava Yolları, Apple)\nBirden fazla firma için: satır başı veya virgül ile ayırabilirsiniz.")
+    ekle = st.button("EKLE")
+    if ekle and company_names_raw:
+        names = [n.strip() for n in company_names_raw.replace("\n", ",").split(",") if n.strip()]
+        eklenenler = []
+        bulunamayanlar = []
+        for name in names:
+            symbol = yahoo_finance_symbol_search(name)
+            if symbol:
+                eklenenler.append(f"{name} → {symbol}")
+                # Sembol zaten listede yoksa ekle
+                if symbol not in auto_tickers:
+                    auto_tickers.append(symbol)
+            else:
+                bulunamayanlar.append(name)
+        if eklenenler:
+            st.success("Eklenenler:\n" + "\n".join(eklenenler))
+        if bulunamayanlar:
+            st.warning("Sembol bulunamayanlar:\n" + ", ".join(bulunamayanlar))
+        # TextArea'yı güncelle
+        st.session_state.auto_tickers = auto_tickers
     st.markdown("---")
     start_dt = st.date_input("Başlangıç", value=date.today() - timedelta(days=365))
     end_dt = st.date_input("Bitiş", value=date.today())
     run = st.button("Verileri Getir", type="primary")
 
-tickers = parse_tickers(tickers_str)
+# Son sembol listesini hazırla
+tickers = parse_tickers(", ".join(st.session_state.get("auto_tickers", [])))
+if tickers_str:
+    # Manuel eklemeden gelenleri de ekle
+    tickers += [t for t in parse_tickers(tickers_str) if t not in tickers]
+tickers = list(dict.fromkeys(tickers)) # Tekrarları sil
+
 if not tickers:
-    st.info("Lütfen en az bir sembol girin.")
+    st.info("Lütfen en az bir sembol girin veya firma adı ile ekleyin.")
     st.stop()
 
 if run:
@@ -82,4 +107,4 @@ if run:
         except Exception as e:
             st.error(f"Veri çekme hatası: {e}")
 
-st.caption("Veriler Yahoo Finance'dan aylık olarak çekilir. Sadece kapanış fiyatı ve aylık değişim yüzdesi gösterilir.\nFirma adına göre sembol bulmak için üstteki alanı kullanabilirsiniz.")
+st.caption("Veriler Yahoo Finance'dan aylık olarak çekilir. Sadece kapanış fiyatı ve aylık değişim yüzdesi gösterilir.\nFirma adına göre sembol bulmak için üstteki alanı kullanabilirsiniz. Sembol bulma işlemi Yahoo Finance arama API'si ile yapılır.")
