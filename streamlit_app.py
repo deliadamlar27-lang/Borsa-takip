@@ -8,7 +8,7 @@ import yfinance as yf
 # ==============================
 # AYARLAR
 # ==============================
-FINNHUB_API_KEY = "d2kqkchr01qs23a3e2ug"  # senin verdiğin anahtar
+FINNHUB_API_KEY = "d2kqkchr01qs23a3e2t0d2kqkchr01qs23a3e2tg"  # senin verdiğin anahtar
 
 # ==============================
 # YARDIMCI FONKSİYONLAR
