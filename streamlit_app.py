@@ -4,24 +4,28 @@ import yfinance as yf
 import requests
 from datetime import date, timedelta
 
-# --- NewsAPI Anahtarı (DİKKAT: Güvenlik için genelde tavsiye edilmez) ---
-NEWSAPI_KEY = "aa6e3b9181e8404bbad288b01e73e19f"  # Anahtarını buraya yazdım
+NEWSAPI_KEY = "aa6e3b9181e8404bbad288b01e73e19f"  # NewsAPI anahtarı
 
-# --- Yardımcı Fonksiyonlar ---
 def parse_tickers(raw: str):
     parts = [p.strip().upper() for p in raw.replace("\n", ",").replace(";", ",").split(",")]
     return [p for p in parts if p]
 
 @st.cache_data(ttl=3600)
-def fetch_data(ticker, start_dt, end_dt, interval):
+def fetch_data_and_info(ticker, start_dt, end_dt, interval):
     df = yf.download(ticker, start=start_dt, end=end_dt + timedelta(days=1), interval=interval, progress=False)
+    info = {}
+    try:
+        tkr = yf.Ticker(ticker)
+        info = tkr.info
+    except Exception:
+        info = {}
     if not df.empty:
         df = df.rename(columns={
             "Open": "Açılış", "High": "Yüksek", "Low": "Düşük",
             "Close": "Kapanış", "Adj Close": "Düzeltilmiş Kapanış", "Volume": "Hacim"
         })
         df.index.name = "Tarih"
-    return df
+    return df, info
 
 def build_stats(df):
     out = pd.DataFrame()
@@ -73,10 +77,9 @@ def get_news_newsapi(query, from_date, to_date, language="tr", page_size=5):
     except Exception:
         return []
 
-# --- Streamlit Arayüzü ---
 st.set_page_config(page_title="Global Borsa Takip", page_icon="📈", layout="wide")
 st.title("📈 Global Borsa Takip Uygulaması")
-st.caption("Yahoo Finance fiyat verileri ve NewsAPI ile haberler.")
+st.caption("Yahoo Finance fiyat verileri, şirket bilgileri ve NewsAPI ile haberler.")
 
 with st.sidebar:
     st.header("Sembol ve Tarih")
@@ -93,10 +96,10 @@ if not tickers:
 
 if run:
     st.subheader("Sonuçlar")
-    for t in tickers[:3]:  # ilk 3 sembol için
+    for t in tickers[:3]:
         st.markdown(f"### {t}")
         try:
-            df = fetch_data(t, start_dt, end_dt, interval)
+            df, info = fetch_data_and_info(t, start_dt, end_dt, interval)
             if df.empty:
                 st.warning("Veri bulunamadı veya sembol geçersiz olabilir.")
                 continue
@@ -105,13 +108,25 @@ if run:
             if not stats.empty:
                 st.markdown("**Özet İstatistikler**")
                 st.dataframe(stats)
+            # Şirket bilgilerini göster
+            if info:
+                st.markdown("**Şirket Bilgileri**")
+                company_name = info.get("longName") or info.get("shortName") or info.get("name") or t
+                sector = info.get("sector", "")
+                st.write(f"**Adı:** {company_name}")
+                st.write(f"**Sektör:** {sector}")
+                st.write(f"**Ülke:** {info.get('country', '')}")
+                st.write(f"**Site:** {info.get('website', '')}")
+            else:
+                company_name = t
         except Exception as e:
             st.error(f"Veri çekme hatası: {e}")
+            company_name = t
 
-        # Haberler
+        # Haberler (Şirket adıyla arama)
         st.markdown("**İlgili Haberler**")
         try:
-            news = get_news_newsapi(t, str(start_dt), str(end_dt))
+            news = get_news_newsapi(company_name, str(start_dt), str(end_dt))
             if news:
                 for n in news:
                     st.write(f"[{n['title']}]({n['url']}) ({n['source']} - {n['date']})")
