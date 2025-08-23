@@ -228,16 +228,42 @@ def add_to_watchlist(sym):
         st.session_state.watchlist.append(sym)
 
 with tab_results:
-    if query.strip():
-        all_hits: List[Dict] = []
-        errors = []
-        for prov in SEARCH_PROVIDERS:
-            try:
-                hits = prov.search(query.strip())
-                all_hits.extend(hits)
-            except Exception as e:
-                errors.append(f"{prov.name}: {e}")
-                continue
+    search_clicked = st.button("Ara", type="primary", use_container_width=True)
+    if search_clicked:
+        if not query.strip():
+            st.warning("Bir arama terimi girin.")
+        else:
+            with st.spinner("Aranıyor..."):
+                df = run_search(query)
+            # Hata mesajlarını çıkar
+            if not df.empty and "error" in df.columns:
+                errs = df[df["error"].notna()]
+                if not errs.empty:
+                    with st.expander("Uyarılar / Sağlayıcı Hataları"):
+                        for _, r in errs.iterrows():
+                            st.code(f"{r.get('provider', '')}: {r['error']}")
+                df = df[df["error"].isna()]  # sadece başarılılar kalsın
+
+            if not df.empty:
+                df = df.drop_duplicates(subset=["symbol","provider","displayName","exchangeDisp"])
+                st.success(f"{len(df)} sonuç bulundu.")
+                for exch, g in df.groupby(df["exchangeDisp"].fillna("").replace("", "Other / Unknown")):
+                    with st.expander(f"**{exch}** — {len(g)} sonuç"):
+                        for _, row in g.iterrows():
+                            c1, c2, c3 = st.columns([6,2,2])
+                            with c1:
+                                st.write(f"**{row['symbol']}** — {row['displayName']}")
+                            with c2:
+                                if st.button("Görüntüle", key=f"view_{row['symbol']}"):
+                                    st.session_state["current_symbol"] = row["symbol"]
+                            with c3:
+                                if st.button("Takibe Al", key=f"add_{row['symbol']}"):
+                                    add_to_watchlist(row["symbol"])
+            else:
+                st.warning("Sonuç bulunamadı. Farklı bir ifade deneyin.")
+    else:
+        st.info("Aramak için 'Ara' butonuna basın.")
+
 
         # Normalizasyon & grupla (Exchange'e göre)
         df = pd.DataFrame(all_hits)
