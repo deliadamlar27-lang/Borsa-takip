@@ -1,125 +1,79 @@
 import streamlit as st
 import pandas as pd
-import yfinance as yf
-import requests
-from datetime import date, timedelta
+from difflib import get_close_matches
 
-# Sembol listesini dosyadan yükle
-def load_symbols(filepath="bist_symbols.csv"):
+# Örnek sembol/firma listesi dosyası
+SYMBOL_FILE = "symbols.csv"
+
+def load_symbols(filepath=SYMBOL_FILE):
     try:
         df = pd.read_csv(filepath)
-        # Kolonlar: symbol, company, exchange (örnek: ASELS.IS, Aselsan, BIST)
+        # Beklenen kolonlar: symbol, company, exchange
         return df
-    except Exception:
+    except Exception as e:
+        st.error(f"Kısaltma/Firma listesi yüklenemedi: {e}")
         return pd.DataFrame(columns=["symbol", "company", "exchange"])
 
-# Yahoo Finance ile yeni sembolleri çek ve listeye ekle
-def update_symbols_from_yahoo(query, filepath="bist_symbols.csv"):
-    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
-    try:
-        resp = requests.get(url, timeout=10)
-        data = resp.json()
-        new_rows = []
-        for item in data.get("quotes", []):
-            if item.get("quoteType") in ["EQUITY", "ETF"]:
-                new_rows.append({
-                    "symbol": item.get("symbol"),
-                    "company": item.get("shortname", ""),
-                    "exchange": item.get("exchange", "")
-                })
-        # Yeni sembolleri dosyaya ekle
-        if new_rows:
-            df_old = load_symbols(filepath)
-            df_new = pd.DataFrame(new_rows)
-            df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=["symbol"]).reset_index(drop=True)
-            df_combined.to_csv(filepath, index=False)
-            return df_combined
-        else:
-            return load_symbols(filepath)
-    except Exception:
-        return load_symbols(filepath)
+def fuzzy_search(df, query, n=10, cutoff=0.6):
+    # Sembol ve firma adında yakın eşleşenleri bul
+    symbols = df["symbol"].tolist()
+    companies = df["company"].tolist()
+    symbol_matches = get_close_matches(query.upper(), symbols, n=n, cutoff=cutoff)
+    company_matches = get_close_matches(query.lower(), [c.lower() for c in companies], n=n, cutoff=cutoff)
+    matched_rows = pd.DataFrame()
+    if symbol_matches:
+        matched_rows = pd.concat([matched_rows, df[df["symbol"].isin(symbol_matches)]])
+    if company_matches:
+        matched_rows = pd.concat([matched_rows, df[df["company"].str.lower().isin(company_matches)]])
+    # Tekrarları sil
+    return matched_rows.drop_duplicates().reset_index(drop=True)
 
-@st.cache_data(ttl=3600)
-def fetch_monthly_data(ticker, start_dt, end_dt):
-    df = yf.download(ticker, start=start_dt, end=end_dt + timedelta(days=1), interval="1mo", progress=False)
-    if not df.empty:
-        df.index = pd.to_datetime(df.index)
-        df = df.rename(columns={"Close": "Kapanış"})
-        df = df[["Kapanış"]]
-    return df
-
-def calc_monthly_changes(df):
-    if df.empty or len(df) < 2:
-        return pd.DataFrame()
-    df = df.sort_index()
-    df["Ay"] = df.index.strftime("%Y-%m")
-    df["Aylık Değişim (%)"] = df["Kapanış"].pct_change().multiply(100).round(2)
-    return df[["Ay", "Kapanış", "Aylık Değişim (%)"]].dropna()
-
-# Uygulama arayüzü
-st.set_page_config(page_title="Kısaltma Listesi ve Takip", page_icon="📈", layout="wide")
-st.title("📈 Kısaltma Listesiyle Hisse/ETF Takip")
-
-if "selected_symbols" not in st.session_state:
-    st.session_state.selected_symbols = []
+st.set_page_config(page_title="Kısaltma/Firma Arama & Takip", page_icon="🔎", layout="wide")
+st.title("🔎 Kısaltma ve Firma Arama - Takip Listesi")
 
 with st.sidebar:
-    st.subheader("Kısaltma Ara & Ekle")
-    symbol_df = load_symbols()
-    search_query = st.text_input("Firma adı veya sembol ara (örn: aselsan, apple, akbank, aapl, msft)")
-    if search_query:
-        # Hem company hem symbol'da arama
-        results = symbol_df[symbol_df.apply(lambda row: search_query.lower() in row["company"].lower() or search_query.lower() in row["symbol"].lower(), axis=1)]
-        if not results.empty:
-            for idx, row in results.iterrows():
-                cols = st.columns([4,1])
-                with cols[0]:
-                    st.write(f"**{row['symbol']}** | {row['company']} | {row['exchange']}")
-                with cols[1]:
-                    if row['symbol'] in st.session_state.selected_symbols:
-                        if st.button(f"Çıkar ({row['symbol']})", key=f"remove_{row['symbol']}"):
-                            st.session_state.selected_symbols.remove(row['symbol'])
-                    else:
-                        if st.button(f"Ekle ({row['symbol']})", key=f"add_{row['symbol']}"):
-                            st.session_state.selected_symbols.append(row['symbol'])
-        else:
-            st.warning("Hiç sembol bulunamadı. 'Güncelle' ile yeni arama ekleyebilirsiniz.")
-    # Sembol listesini güncelle
-    if st.button("🔄 Güncelle", key="update_symbols") and search_query:
-        symbol_df = update_symbols_from_yahoo(search_query)
-        st.success("Kısaltma listesi güncellendi!")
-
+    st.subheader("Arama Yap")
+    query = st.text_input("Aramak istediğiniz firma veya kısaltma (örn: aselsan, ASELS, apple, AAPL)")
     st.markdown("---")
     st.subheader("Takip Listeniz")
-    if st.session_state.selected_symbols:
-        st.write(", ".join(st.session_state.selected_symbols))
+    if "selected" not in st.session_state:
+        st.session_state.selected = []
+    # Takipteki sembolleri göster
+    if st.session_state.selected:
+        takip_df = load_symbols()
+        takip_rows = takip_df[takip_df["symbol"].isin(st.session_state.selected)]
+        st.dataframe(takip_rows, use_container_width=True)
+        # Çıkar tuşu
+        remove_symbol = st.selectbox("Takip listesinden çıkar:", [""] + st.session_state.selected)
+        if remove_symbol and st.button("Çıkar"):
+            st.session_state.selected.remove(remove_symbol)
     else:
-        st.info("Henüz bir sembol eklemediniz.")
-    start_dt = st.date_input("Başlangıç", value=date.today() - timedelta(days=365))
-    end_dt = st.date_input("Bitiş", value=date.today())
-    run = st.button("Verileri Getir", type="primary")
+        st.info("Henüz sembol eklemediniz.")
 
-tickers = st.session_state.selected_symbols
+symbols_df = load_symbols()
 
-if run:
-    if not tickers:
-        st.warning("Takip listeniz boş. Lütfen en az bir sembol ekleyin.")
-    elif start_dt >= end_dt:
-        st.error("Başlangıç tarihi bitiş tarihinden önce olmalı!")
-    else:
-        st.subheader("Seçilen Sembollerin Sonuçları")
-        for t in tickers:
-            st.markdown(f"### {t}")
-            try:
-                df = fetch_monthly_data(t, start_dt, end_dt)
-                changes = calc_monthly_changes(df)
-                if not changes.empty:
-                    st.dataframe(changes, use_container_width=True)
+st.subheader("Tüm Semboller Tablosu")
+st.dataframe(symbols_df, use_container_width=True)
+
+st.subheader("Arama Sonuçları (Yakın Eşleşmeler dahil)")
+if query:
+    results_df = fuzzy_search(symbols_df, query)
+    if not results_df.empty:
+        for idx, row in results_df.iterrows():
+            cols = st.columns([4,1])
+            with cols[0]:
+                st.write(f"**{row['symbol']}** | {row['company']} | {row['exchange']}")
+            with cols[1]:
+                if row['symbol'] in st.session_state.selected:
+                    st.button("Takipte", key=f"exist_{row['symbol']}_{idx}", disabled=True)
                 else:
-                    st.info("Yeterli veri yok, lütfen tarih aralığını genişletin veya başka sembol deneyin.")
-            except Exception as e:
-                st.error(f"Veri çekme hatası: {e}")
+                    if st.button("Takibe Ekle", key=f"add_{row['symbol']}_{idx}"):
+                        st.session_state.selected.append(row['symbol'])
+    else:
+        st.warning("Aramaya uygun kısaltma veya firma bulunamadı.")
+else:
+    st.info("Arama kutusuna firma veya kısaltma yazın.")
 
 st.caption(
-    "Sembol arama işlemi önce yerel kısaltma listesinden yapılır, istenirse Yahoo Finance'dan yeni semboller eklenebilir."
+    "Bu uygulamada kısaltma (sembol) ile firma adı yan yana görünür ve arama yaptığınızda en yakın eşleşmeler önerilir. Takip listenizi kolayca oluşturabilirsiniz."
 )
