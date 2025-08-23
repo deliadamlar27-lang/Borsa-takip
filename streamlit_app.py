@@ -4,6 +4,21 @@ import yfinance as yf
 from datetime import date, timedelta
 import requests
 
+# Manuel eşleme: BIST ve yaygın yabancı hisseler
+MANUAL_SYMBOLS = {
+    "aselsan": "ASELS.IS",
+    "türk hava yolları": "THYAO.IS",
+    "garanti": "GARAN.IS",
+    "akbank": "AKBNK.IS",
+    "koç holding": "KCHOL.IS",
+    "apple": "AAPL",
+    "microsoft": "MSFT",
+    "ford": "F",
+    "tesla": "TSLA",
+    "amazon": "AMZN",
+    # İstediğin kadar ekleyebilirsin!
+}
+
 def parse_tickers(raw: str):
     parts = [p.strip().upper() for p in raw.replace("\n", ",").replace(";", ",").split(",")]
     return [p for p in parts if p]
@@ -13,7 +28,6 @@ def yahoo_finance_symbol_search(company_name: str):
     try:
         resp = requests.get(url, timeout=7)
         data = resp.json()
-        # Sonuçlardan uygun olan ilk sembolü bul
         for item in data.get("quotes", []):
             if item.get("quoteType") in ["EQUITY", "ETF"]:
                 return item.get("symbol")
@@ -55,23 +69,23 @@ with st.sidebar:
         "Firma adları (ör: Türk Hava Yolları, Apple)\nBirden fazla firma için: satır başı veya virgül ile ayırabilirsiniz."
     )
 
-    # Firma arama ve onay mekanizması
-    names = [n.strip() for n in company_names_raw.replace("\n", ",").split(",") if n.strip()]
+    names = [n.strip().lower() for n in company_names_raw.replace("\n", ",").split(",") if n.strip()]
     for idx, name in enumerate(names):
         if name:
             symbol = yahoo_finance_symbol_search(name)
+            if not symbol:
+                symbol = MANUAL_SYMBOLS.get(name)
             if symbol:
-                # Onay butonu ile ekleme
                 col1, col2 = st.columns([2, 1])
                 with col1:
-                    st.info(f"**{name}** için sembol olarak '{symbol}' mu demek istediniz?")
+                    st.info(f"**{name.title()}** için sembol olarak '{symbol}' mu demek istediniz?")
                 with col2:
                     if st.button(f"Ekle ({symbol})", key=f"add_{symbol}_{idx}"):
                         if symbol not in auto_tickers:
                             auto_tickers.append(symbol)
                         st.success(f"'{symbol}' sembolü eklendi!")
             else:
-                st.warning(f"**{name}** için sembol bulunamadı.")
+                st.warning(f"{name.title()} için sembol bulunamadı.")
     st.markdown("---")
     start_dt = st.date_input("Başlangıç", value=date.today() - timedelta(days=365))
     end_dt = st.date_input("Bitiş", value=date.today())
@@ -106,5 +120,5 @@ if run:
 
 st.caption(
     "Veriler Yahoo Finance'dan aylık olarak çekilir. Sadece kapanış fiyatı ve aylık değişim yüzdesi gösterilir. "
-    "Firma adına göre sembol bulmak için üstteki alanı kullanabilirsiniz. Sembol bulma işlemi Yahoo Finance arama API'si ile yapılır."
+    "Firma adına göre sembol bulmak için üstteki alanı kullanabilirsiniz. Sembol bulma işlemi Yahoo Finance arama API'si ve manuel eşleme ile yapılır."
 )
