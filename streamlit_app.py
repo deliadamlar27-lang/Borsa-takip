@@ -1,35 +1,3 @@
-"""
-Global Borsa Takip Uygulaması (Streamlit)
-=========================================
-
-Nasıl çalıştırılır?
--------------------
-1) Python 3.10+ kurulu olmalı
-2) Aşağıdaki kütüphaneleri yükleyin:
-   pip install -U streamlit yfinance pandas numpy plotly XlsxWriter
-3) Bu dosyayı kaydedin (ör: app.py) ve çalıştırın:
-   streamlit run app.py
-
-Notlar
------
-- Yahoo Finance sembol kurallarıyla tüm dünyadaki bir çok borsadan veri çekebilirsiniz.
-  * BIST (İstanbul): THYAO.IS, ASELS.IS, AKBNK.IS gibi
-  * NYSE/Nasdaq (ABD): AAPL, MSFT, TSLA
-  * LSE (Londra): HSBA.L, BP.L
-  * XETRA (Almanya): SAP.DE, BMW.DE
-  * TSE (Tokyo): 7203.T (Toyota)
-  * HKEX (Hong Kong): 0700.HK (Tencent)
-  * NSE/BSE (Hindistan): RELIANCE.NS, TCS.NS
-- 1 dakikalık (1m) gibi kısa aralıklar Yahoo Finance tarafından son ~30 günle sınırlı olabilir.
-- Bu uygulama Excel’e (XLSX) çoklu sayfa olarak (her sembol ayrı sayfa) dışa aktarma yapar.
-- Ayarlarınızı JSON olarak indirip daha sonra tekrar yükleyerek kolayca revize edebilirsiniz.
-
-Lisans
-------
-Bu örnek eğitim amaçlıdır; yatırım tavsiyesi değildir.
-"""
-
-from __future__ import annotations
 import io
 from datetime import date, timedelta
 from typing import Dict, List, Tuple
@@ -39,6 +7,13 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
+import requests
+
+# -----------------------------
+# API Anahtarlarını ekleyin!
+# -----------------------------
+BING_API_KEY = st.secrets.get("bing_key", "")  # streamlit secrets ile veya direkt olarak yazabilirsiniz
+OPENAI_API_KEY = st.secrets.get("openai_key", "")
 
 # -----------------------------
 # Yardımcı Fonksiyonlar
@@ -51,7 +26,6 @@ def parse_tickers(raw: str) -> List[str]:
 @st.cache_data(show_spinner=False, ttl=60 * 60)
 def fetch_data(ticker: str, start_dt: date, end_dt: date, interval: str) -> pd.DataFrame:
     df = yf.download(ticker, start=start_dt, end=end_dt + timedelta(days=1), interval=interval, progress=False, auto_adjust=False)
-    # Kolon adlarını standardize edelim
     if not df.empty:
         df = df.rename(columns={
             "Open": "Açılış",
@@ -93,33 +67,97 @@ def build_stats(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame([summary])
     return out.round(3)
 
+def search_symbols(query: str) -> List[Dict]:
+    # Yahoo Finance autocomplete endpoint
+    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
+    try:
+        resp = requests.get(url, timeout=10)
+        data = resp.json()
+        items = data.get("quotes", [])
+        results = []
+        for item in items:
+            results.append({
+                "symbol": item.get("symbol"),
+                "name": item.get("shortname", item.get("longname", "")),
+                "exchange": item.get("exchange", ""),
+                "score": item.get("score", 0),
+            })
+        return results
+    except Exception:
+        return []
+
+def get_news_bing(query: str, startdate: str, enddate: str, market="en-US", count=5) -> List[Dict]:
+    # Bing News Search API
+    if not BING_API_KEY:
+        return []
+    headers = {"Ocp-Apim-Subscription-Key": BING_API_KEY}
+    params = {
+        "q": query,
+        "count": count,
+        "mkt": market,
+        "freshness": "week",  # son haftanın haberleri
+        "sortBy": "Date"
+    }
+    url = "https://api.bing.microsoft.com/v7.0/news/search"
+    try:
+        resp = requests.get(url, headers=headers, params=params, timeout=10)
+        results = resp.json().get("value", [])
+        news = []
+        for item in results:
+            news.append({
+                "title": item.get("name"),
+                "desc": item.get("description"),
+                "url": item.get("url"),
+                "date": item.get("datePublished"),
+                "source": item.get("provider", [{}])[0].get("name", ""),
+            })
+        return news
+    except Exception:
+        return []
+
+def chatgpt_summary(context: str, stats: Dict, news: List[Dict]):
+    if not OPENAI_API_KEY:
+        return "ChatGPT API anahtarı eklenmedi!"
+    import openai
+    openai.api_key = OPENAI_API_KEY
+    prompt = (
+        "Aşağıdaki şirketin finansal verileri ve haberleri verildi. "
+        "Lütfen fiyat değişimi istatistiklerini ve haberlerle olası bağlantıları tartış: "
+        f"\nİstatistikler: {stats}"
+        f"\nHaberler: {[n['title']+': '+n['desc'] for n in news]}"
+        f"\nKullanıcı notu: {context}"
+    )
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"ChatGPT isteği başarısız: {e}"
+
 # -----------------------------
 # UI
 # -----------------------------
 st.set_page_config(page_title="Global Borsa Takibi", page_icon="📈", layout="wide")
-
 st.title("📈 Global Borsa Takip Uygulaması")
-st.caption("Yahoo Finance verileri kullanılarak çoklu borsalardan sembol takibi, grafikleme ve Excel'e aktarım.")
+st.caption("Yahoo Finance verileri, haberler ve ChatGPT ile istatistik tartışma.")
 
 with st.sidebar:
-    st.header("Ayarlar")
-
-    # Örnek semboller
-    with st.expander("Sembol örnekleri / borsa son ekleri"):
-        st.markdown(
-            """
-            - **BIST**: `THYAO.IS`, `ASELS.IS`, `AKBNK.IS`
-            - **ABD**: `AAPL`, `MSFT`, `TSLA`
-            - **Londra**: `HSBA.L`, `BP.L`
-            - **Almanya (XETRA)**: `SAP.DE`, `BMW.DE`
-            - **Tokyo**: `7203.T` (Toyota)
-            - **Hong Kong**: `0700.HK` (Tencent)
-            - **Hindistan**: `RELIANCE.NS`, `TCS.NS`
-            """
-        )
+    st.header("Sembol Arama")
+    search_text = st.text_input("Şirket adı veya sembol ara", value="", help="Şirket adı veya sembol girin (örn: Apple, ASELS)")
+    if search_text:
+        results = search_symbols(search_text)
+        if results:
+            st.markdown("### Arama Sonuçları")
+            for res in results[:10]:
+                st.write(f"**{res['symbol']}** - {res['name']} ({res['exchange']})")
+        else:
+            st.info("Sonuç bulunamadı.")
 
     tickers_str = st.text_area(
-        "Semboller (virgül / satır ile ayırın)",
+        "İzlenecek Semboller (virgül / satır ile ayırın)",
         value="THYAO.IS, ASELS.IS\nAAPL, MSFT",
         height=90,
         help="Birden fazla sembol girebilirsiniz. Örn: THYAO.IS, AAPL, HSBA.L"
@@ -160,7 +198,6 @@ with st.sidebar:
     if uploaded_cfg is not None:
         try:
             loaded = pd.read_json(uploaded_cfg)
-            # loaded burada pandas Series olarak gelebilir
             if isinstance(loaded, pd.Series):
                 loaded = loaded.to_dict()
             elif isinstance(loaded, pd.DataFrame) and loaded.shape == (1, len(loaded.columns)):
@@ -173,12 +210,9 @@ with st.sidebar:
     st.divider()
     run = st.button("Verileri Getir", type="primary")
 
-# Yüklenen ayarları UI'ya otomatik uygulamak yerine kullanıcıya bilgi verdik (yan etkiden kaçınmak için).
-
 # -----------------------------
 # Veri Alma ve Görselleştirme
 # -----------------------------
-
 tickers = parse_tickers(tickers_str)
 if not tickers:
     st.info("Lütfen en az bir sembol girin.")
@@ -190,13 +224,15 @@ if not ok:
 
 if run:
     st.subheader("Sonuçlar")
-
     all_dfs: Dict[str, pd.DataFrame] = {}
     stats_list: List[pd.DataFrame] = []
+    news_dict = {}
 
-    for t in tickers:
+    for t in tickers[:3]:  # 3 sembole kadar haber çekilecek
         with st.container(border=True):
             st.markdown(f"### {t}")
+
+            # 1. Fiyat ve istatistikler
             try:
                 df = fetch_data(t, start_dt, end_dt, interval)
                 if df.empty:
@@ -217,7 +253,6 @@ if run:
                     fig.update_layout(height=400, margin=dict(l=0, r=0, t=20, b=0))
                     st.plotly_chart(fig, use_container_width=True)
                 else:
-                    # Çizgi grafikleri bir arada göstermek için
                     fig = go.Figure()
                     for col in [c for c in ["Kapanış", "Düzeltilmiş Kapanış", "Hacim"] if c in what_to_show and c in df.columns]:
                         fig.add_trace(go.Scatter(x=df.index, y=df[col], mode="lines", name=col))
@@ -237,9 +272,29 @@ if run:
                     st.dataframe(sdf)
                 else:
                     st.info("İstatistik üretmek için yeterli veri yok.")
-
             except Exception as e:
                 st.error(f"{t} için hata: {e}")
+
+            # 2. Haberler
+            st.markdown("**İlgili Haberler**")
+            try:
+                news = get_news_bing(t, str(start_dt), str(end_dt))
+                news_dict[t] = news
+                if news:
+                    for n in news:
+                        st.write(f"[{n['title']}]({n['url']}) ({n['source']} - {n['date']})")
+                        st.caption(n['desc'])
+                else:
+                    st.info("Haber bulunamadı veya API anahtarı girilmedi.")
+            except Exception as e:
+                st.error(f"Haberler çekilemedi: {e}")
+
+            # 3. ChatGPT ile tartışma
+            st.markdown("**ChatGPT ile Tartışma**")
+            user_note = st.text_area(f"{t} için Chat'e not yaz (isteğe bağlı)", value="", key=f"note_{t}")
+            if st.button(f"{t} için GPT ile analiz et", key=f"gpt_{t}"):
+                summary = chatgpt_summary(user_note, sdf.to_dict() if not sdf.empty else {}, news)
+                st.info(summary)
 
     # Birleşik istatistik tablosu
     if stats_list:
@@ -253,16 +308,13 @@ if run:
         fname = st.text_input("Dosya adı", value="borsa_veri.xlsx")
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-            # Her sembol için ayrı sayfa
             for sym, df in all_dfs.items():
-                # Excel sayfa adlarında uygunsuz karakterleri düzeltelim
                 sheet = sym[:31].replace("/", "-")
                 df.to_excel(writer, sheet_name=sheet)
-            # Özet istatistikler sayfası
             if stats_list:
                 combined.to_excel(writer, sheet_name="Özet")
             writer.close()
         st.download_button("Excel indir", data=buffer.getvalue(), file_name=fname, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # Alt bilgi
-st.caption("Veriler Yahoo Finance üzerinden sağlanır ve gecikmeli olabilir. Yatırım kararları için tek kaynak olarak kullanmayın.")
+st.caption("Veriler Yahoo Finance ve Bing News üzerinden sağlanır ve gecikmeli olabilir. Yatırım kararları için tek kaynak olarak kullanmayın. ChatGPT ile tartışmalar öneridir, yatırım tavsiyesi değildir.")
