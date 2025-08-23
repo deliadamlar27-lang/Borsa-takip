@@ -33,9 +33,11 @@ company_query = st.sidebar.text_input(
 
 if st.sidebar.button("Ara"):
     results = search_symbols(company_query)
+    
     if results:
         st.subheader("🔍 Eşleşen Semboller")
         selected_symbols = []
+        
         for res in results:
             symbol = res.get("symbol")
             desc = res.get("description")
