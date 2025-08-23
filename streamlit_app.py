@@ -117,6 +117,21 @@ def add_to_watchlist(sym):
 # TAB: Sonuçlar
 # =========================
 with tab_results:
+    with tab_results:
+    search_clicked = st.button("Ara", type="primary", use_container_width=True)
+
+    # Eğer kullanıcı sembol formatında girdiyse (örn ASELS.IS, AAPL, BMW.DE)
+    if search_clicked and query.strip():
+        if "." in query.strip() or query.strip().isupper():
+            # Direkt sembol gibi kabul et
+            st.session_state["current_symbol"] = query.strip()
+            st.success(f"{query.strip()} sembolü seçildi. Görünüm sekmesine geçin.")
+        else:
+            # Normal isim araması
+            with st.spinner("Aranıyor..."):
+                df = run_search(query)
+            ...
+
     search_clicked = st.button("Ara", type="primary", use_container_width=True)
 
     if search_clicked:
