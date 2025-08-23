@@ -1,21 +1,18 @@
-import os
+import time
 import requests
 import pandas as pd
 import streamlit as st
 import yfinance as yf
-import time
 
 # =========================
-# Yardımcı
+# API Keys
 # =========================
-def safe_str(x):
-    return "" if x is None else str(x)
+FINNHUB_API_KEY = "d2kqkchr01qs23a3e2ug"  # senin verdiğin key
 
 # =========================
-# Yahoo Arama Sağlayıcı
+# Search Providers
 # =========================
 class YahooSearchProvider:
-    name = "yahoo"
     URL = "https://query2.finance.yahoo.com/v1/finance/search"
 
     def search(self, query: str):
@@ -31,66 +28,67 @@ class YahooSearchProvider:
         items = data.get("quotes", []) or []
         results = []
         for it in items:
-            sym = safe_str(it.get("symbol"))
-            shortname = safe_str(it.get("shortname") or it.get("longname") or it.get("name"))
-            exch = safe_str(it.get("exchDisp"))
             results.append({
-                "provider": self.name,
-                "symbol": sym,
-                "displayName": shortname,
-                "exchangeDisp": exch,
+                "symbol": it.get("symbol", ""),
+                "name": it.get("shortname") or it.get("longname") or it.get("name", ""),
+                "exchange": it.get("exchDisp", ""),
             })
         return results
 
+class FinnhubSearchProvider:
+    URL = "https://finnhub.io/api/v1/search"
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+
+    def search(self, query: str):
+        if not self.api_key:
+            return []
+        params = {"q": query, "token": self.api_key}
+        r = requests.get(self.URL, params=params, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        results = []
+        for it in data.get("result", []):
+            results.append({
+                "symbol": it.get("symbol", ""),
+                "name": it.get("description", ""),
+                "exchange": it.get("type", ""),
+            })
+        return results
+
+# Sağlayıcı listesi
 SEARCH_PROVIDERS = [YahooSearchProvider()]
+if FINNHUB_API_KEY:
+    SEARCH_PROVIDERS.append(FinnhubSearchProvider(FINNHUB_API_KEY))
 
 # =========================
-# Cache’li Arama
+# Fiyat ve Tarihsel Veri
 # =========================
-@st.cache_data(ttl=3600, show_spinner=False)
-def run_search(query: str) -> pd.DataFrame:
-    all_hits = []
-    for prov in SEARCH_PROVIDERS:
-        try:
-            all_hits += prov.search(query.strip())
-        except Exception as e:
-            all_hits += [{"provider": prov.name, "error": str(e)}]
-    return pd.DataFrame(all_hits)
-
-# =========================
-# Fiyat & Tarihsel Veri
-# =========================
-def get_realtime_overview(symbol: str):
+def get_overview(symbol: str):
     tk = yf.Ticker(symbol)
     out = {"last": None, "change": None, "change_pct": None, "currency": "", "exchange": ""}
-
     try:
         fi = tk.fast_info
-        out["currency"] = safe_str(getattr(fi, "currency", "") or fi.get("currency", ""))
-        out["exchange"] = safe_str(getattr(fi, "exchange", "") or fi.get("exchange", ""))
-        last = getattr(fi, "last_price", None) or fi.get("last_price", None)
-        if last is not None:
-            out["last"] = float(last)
+        out["last"] = float(fi.get("last_price", None))
+        out["currency"] = fi.get("currency", "")
+        out["exchange"] = fi.get("exchange", "")
     except Exception:
         pass
-
     try:
-        h = tk.history(period="5d", interval="1d", auto_adjust=False)
+        h = tk.history(period="5d", interval="1d")
         if not h.empty:
             out["last"] = float(h["Close"].iloc[-1])
             prev = float(h["Close"].iloc[-2]) if len(h) > 1 else None
-            if prev is not None:
+            if prev:
                 out["change"] = out["last"] - prev
                 out["change_pct"] = (out["change"] / prev) * 100
     except Exception:
         pass
-
     return out
 
-def get_monthly_history(symbol: str, period_key: str = "1y"):
-    period_map = {"1y": "1y", "3y": "3y", "5y": "5y", "max": "max"}
-    per = period_map.get(period_key, "1y")
-    df = yf.download(symbol, period=per, interval="1mo", auto_adjust=False, progress=False)
+def get_monthly(symbol: str, period="1y"):
+    df = yf.download(symbol, period=period, interval="1mo", auto_adjust=False, progress=False)
     return df
 
 # =========================
@@ -100,106 +98,78 @@ st.set_page_config(page_title="Küresel Sembol Arama", page_icon="🌍", layout=
 st.title("🌍 Küresel Sembol Arama — Aylık Görünüm")
 
 with st.sidebar:
-    st.markdown("**Arama**")
-    query = st.text_input("Şirket adı veya sembol (örn: ASELSAN, THYAO, Apple, AAPL, BMW):")
-    st.caption("Not: Sonuçlar canlı aranır (BIST dahil).")
+    query = st.text_input("Şirket adı veya sembol yazın (örn: ASELSAN, ASELS.IS, AAPL):")
 
 tab_results, tab_view = st.tabs(["🔎 Sonuçlar", "📈 Görünüm"])
 
-if "watchlist" not in st.session_state:
-    st.session_state.watchlist = []
-
-def add_to_watchlist(sym):
-    if sym not in st.session_state.watchlist:
-        st.session_state.watchlist.append(sym)
+if "current_symbol" not in st.session_state:
+    st.session_state.current_symbol = ""
 
 # =========================
 # TAB: Sonuçlar
 # =========================
 with tab_results:
-    # Arama butonu
-    search_clicked = st.button("Ara", type="primary", use_container_width=True)
-
-    if search_clicked and query.strip():
-        # Eğer sembol gibi görünüyorsa (örn. ASELS.IS, AAPL, BMW.DE)
-        if "." in query.strip() or query.strip().isupper():
-            st.session_state["current_symbol"] = query.strip()
-            st.success(f"{query.strip()} sembolü seçildi. Görünüm sekmesine geçin.")
+    if st.button("Ara", type="primary", use_container_width=True):
+        if not query.strip():
+            st.warning("Bir şey yazın.")
         else:
-            with st.spinner("Aranıyor..."):
-                df = run_search(query)
-
-            if not df.empty and "error" in df.columns:
-                errs = df[df["error"].notna()]
-                if not errs.empty:
-                    with st.expander("Uyarılar / Sağlayıcı Hataları"):
-                        for _, r in errs.iterrows():
-                            st.code(f"{r.get('provider','')}: {r['error']}")
-                df = df[df["error"].isna()]
-
-            if not df.empty:
-                df = df.drop_duplicates(subset=["symbol","provider","displayName","exchangeDisp"])
-                st.success(f"{len(df)} sonuç bulundu.")
-                for exch, g in df.groupby(df["exchangeDisp"].fillna("").replace("", "Other / Unknown")):
-                    with st.expander(f"**{exch}** — {len(g)} sonuç"):
-                        for _, row in g.iterrows():
-                            c1, c2, c3 = st.columns([6,2,2])
-                            with c1:
-                                st.write(f"**{row['symbol']}** — {row['displayName']}")
-                            with c2:
-                                if st.button("Görüntüle", key=f"view_{row['symbol']}"):
-                                    st.session_state["current_symbol"] = row["symbol"]
-                            with c3:
-                                if st.button("Takibe Al", key=f"add_{row['symbol']}"):
-                                    add_to_watchlist(row["symbol"])
+            # Doğrudan sembol gibi görünüyorsa
+            if "." in query.strip() or query.strip().isupper():
+                st.session_state.current_symbol = query.strip()
+                st.success(f"{query.strip()} seçildi. Görünüm sekmesine geçin.")
             else:
-                st.warning("Sonuç bulunamadı. Farklı bir ifade deneyin.")
-    else:
-        st.info("Aramak için 'Ara' butonuna basın.")
+                with st.spinner("Aranıyor..."):
+                    results = []
+                    for prov in SEARCH_PROVIDERS:
+                        try:
+                            r = prov.search(query)
+                            if r:
+                                results.extend(r)
+                        except Exception as e:
+                            st.write(f"{prov.__class__.__name__} hata: {e}")
+                            continue
 
+                if results:
+                    df = pd.DataFrame(results).drop_duplicates(subset=["symbol"])
+                    for _, row in df.iterrows():
+                        c1, c2 = st.columns([6,2])
+                        with c1:
+                            st.write(f"**{row['symbol']}** — {row['name']} ({row['exchange']})")
+                        with c2:
+                            if st.button("Seç", key=row['symbol']):
+                                st.session_state.current_symbol = row['symbol']
+                                st.success(f"{row['symbol']} seçildi. Görünüm sekmesine geçin.")
+                else:
+                    st.warning("Sonuç bulunamadı.")
+    else:
+        st.info("Aramak için 'Ara'ya basın.")
 
 # =========================
 # TAB: Görünüm
 # =========================
 with tab_view:
-    st.subheader("Seçili Sembol")
-    symbol = st.text_input("Sembol (örn: THYAO.IS, AAPL, BMW.DE)", value=st.session_state.get("current_symbol", ""))
+    symbol = st.session_state.current_symbol
+    if not symbol:
+        st.info("Henüz sembol seçmediniz.")
+    else:
+        st.subheader(f"Sembol: {symbol}")
+        period = st.radio("Dönem (Aylık)", ["1y","3y","5y","max"], horizontal=True)
 
-    cols = st.columns([2,2,2,2])
-    with cols[0]:
-        period_key = st.radio("Dönem (Aylık)", options=["1y","3y","5y","max"], horizontal=True, index=0)
-
-    if st.button("Verileri Getir", type="primary"):
-        if not symbol.strip():
-            st.warning("Önce bir sembol seçin veya girin.")
-        else:
+        if st.button("Verileri Getir", type="primary"):
             with st.spinner("Veriler getiriliyor..."):
-                overview = get_realtime_overview(symbol.strip())
-                hist = get_monthly_history(symbol.strip(), period_key=period_key)
+                ov = get_overview(symbol)
+                hist = get_monthly(symbol, period)
 
             c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                st.metric("Sembol", symbol)
-            with c2:
-                st.metric("Son Fiyat", f"{overview['last']:.4f}" if overview["last"] else "—")
-            with c3:
-                if overview["change"] is not None:
-                    st.metric("Değişim", f"{overview['change']:+.4f} ({overview['change_pct']:+.2f}%)")
-                else:
-                    st.metric("Değişim", "—")
-            with c4:
-                st.metric("Borsa", f"{overview['currency']} / {overview['exchange']}")
-
-            st.subheader("Aylık Grafik")
-            if hist is not None and not hist.empty:
-                if isinstance(hist.columns, pd.MultiIndex):
-                    hist.columns = ["_".join([c for c in col if c]) for col in hist.columns.values]
-                close_col = "Close" if "Close" in hist.columns else hist.columns[-1]
-                st.line_chart(hist[close_col].dropna())
+            c1.metric("Sembol", symbol)
+            c2.metric("Son Fiyat", f"{ov['last']:.2f}" if ov['last'] else "—")
+            if ov["change"] is not None:
+                c3.metric("Değişim", f"{ov['change']:+.2f} ({ov['change_pct']:+.2f}%)")
             else:
-                st.warning("Bu dönem için veri bulunamadı.")
+                c3.metric("Değişim", "—")
+            c4.metric("Borsa", f"{ov['currency']} / {ov['exchange']}")
 
-    if st.session_state.watchlist:
-        st.markdown("---")
-        st.subheader("Takip Listem")
-        st.write(", ".join(st.session_state.watchlist))
+            if hist is not None and not hist.empty:
+                st.line_chart(hist["Close"].dropna())
+            else:
+                st.warning("Veri bulunamadı.")
