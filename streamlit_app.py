@@ -5,7 +5,7 @@ import requests
 from datetime import date, timedelta
 
 # --- Ayarlar ve API Key ---
-NEWSAPI_KEY = st.secrets.get("aa6e3b9181e8404bbad288b01e73e19f", "")
+NEWSAPI_KEY = st.secrets.get("newsapi_key", "aa6e3b9181e8404bbad288b01e73e19f")
 
 # --- Yardımcı Fonksiyonlar ---
 def parse_tickers(raw: str):
