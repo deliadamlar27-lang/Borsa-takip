@@ -19,12 +19,12 @@ def fetch_monthly_data(ticker, start_dt, end_dt):
 def calc_monthly_changes(df):
     if df.empty or len(df) < 2:
         return pd.DataFrame()
-    df = df.copy()
+    # Sıralama ve resetleme
+    df = df.sort_index()
     df["Ay"] = df.index.strftime("%Y-%m")
-    df["Önceki Kapanış"] = df["Kapanış"].shift(1)
-    df["Aylık Değişim (%)"] = ((df["Kapanış"] - df["Önceki Kapanış"]) / df["Önceki Kapanış"] * 100).round(2)
-    df = df.dropna(subset=["Aylık Değişim (%)"])
-    return df[["Ay", "Kapanış", "Aylık Değişim (%)"]]
+    df["Aylık Değişim (%)"] = df["Kapanış"].pct_change().multiply(100).round(2)
+    # İlk satırı (NaN) atla, geri kalanı göster
+    return df[["Ay", "Kapanış", "Aylık Değişim (%)"]].dropna()
 
 st.set_page_config(page_title="Aylık Getiri", page_icon="📈", layout="wide")
 st.title("📈 Hisse Senedi Aylık Getiri Takibi")
